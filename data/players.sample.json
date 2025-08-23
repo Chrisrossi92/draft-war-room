@@ -1,0 +1,9 @@
+[
+  { "id": "cmc",  "name": "Christian McCaffrey", "pos": "RB", "team": "SF",  "bye": 9 },
+  { "id": "bijan","name": "Bijan Robinson",      "pos": "RB", "team": "ATL", "bye": 11 },
+  { "id": "lamb", "name": "CeeDee Lamb",         "pos": "WR", "team": "DAL", "bye": 7 },
+  { "id": "allen","name": "Josh Allen",          "pos": "QB", "team": "BUF", "bye": 12 },
+  { "id": "kelce","name": "Travis Kelce",        "pos": "TE", "team": "KC",  "bye": 6 },
+  { "id": "hall", "name": "Breece Hall",         "pos": "RB", "team": "NYJ", "bye": 12 },
+  { "id": "chase","name": "Ja'Marr Chase",       "pos": "WR", "team": "CIN", "bye": 12 }
+]
