@@ -6,6 +6,7 @@ import TopBar from '@/components/draft/TopBar';
 import BestAvailablePanel from '@/components/draft/BestAvailablePanel';
 import QueueTargetsPanel from '@/components/draft/RightRail/QueueTargetsPanel';
 import RosterPanel from '@/components/draft/RightRail/RosterPanel';
+import SurvivabilityPanel from '@/components/draft/RightRail/SurvivabilityPanel';
 import DraftActionBar from '@/components/draft/DraftActionBar';
 import TeamClaimList from '@/components/draft/TeamClaimList';
 import AutoTimer from '@/components/draft/AutoTimer';
@@ -14,10 +15,9 @@ import { useDraftStore } from '@/store/useDraftStore';
 import { fetchSession } from '@/lib/fetchSession';
 import { subscribeToSession } from '@/lib/realtime';
 import { getOrCreateClaimToken } from '@/lib/claimToken';
+import { refreshPlayersFromServer, loadPlayersIntoStore } from '@/lib/data/loadPlayers';
 import PLAYERS_JSON from '@/data/players.sample.json';
 import ADP_JSON from '@/data/adp.sample.json';
-import SurvivabilityPanel from '@/components/draft/RightRail/SurvivabilityPanel';
-
 
 function OnlineControls({
   sessionId,
@@ -35,6 +35,7 @@ function OnlineControls({
   onOpenBoard: () => void;
 }) {
   const [slotInput, setSlotInput] = useState<string>('');
+  const [refreshing, setRefreshing] = useState(false);
   const myTeamId = useDraftStore((s) => s.myTeamId);
   const setMyTeam = useDraftStore((s) => s.setMyTeam);
 
@@ -64,6 +65,19 @@ function OnlineControls({
     }
     setMyTeam(data.id);
     return data.id as string;
+  };
+
+  const doRefresh = async () => {
+    try {
+      setRefreshing(true);
+      await refreshPlayersFromServer();   // hits Sleeper + snapshots in Supabase
+      const n = await loadPlayersIntoStore();
+      alert(`Loaded ${n} players.`);
+    } catch (e:any) {
+      alert(e?.message ?? 'Refresh failed');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   return (
@@ -96,6 +110,15 @@ function OnlineControls({
       </button>
 
       <button
+        onClick={doRefresh}
+        disabled={refreshing}
+        className="rounded-lg bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700 disabled:opacity-50"
+        title="Fetch latest players/ADP and load into the app"
+      >
+        {refreshing ? 'Refreshing…' : 'Refresh Data'}
+      </button>
+
+      <button
         onClick={async () => {
           if (!selectedId) return alert('Select a player first');
           const teamId = myTeamId || (await ensureClaim());
@@ -113,7 +136,6 @@ function OnlineControls({
             return;
           }
 
-          // optimistic bump
           const st = useDraftStore.getState();
           const n = (st.config?.order?.length ?? 10);
           const overall = st.currentPickOverall;
@@ -126,7 +148,6 @@ function OnlineControls({
         }}
         className="rounded-lg bg-indigo-600 px-3 py-2 text-sm hover:bg-indigo-500 disabled:opacity-50"
         disabled={!selectedId}
-        title={myTeamId ? 'Claimed' : 'Will auto-claim then draft'}
       >
         Draft (online){myTeamId ? ' — claimed' : ''}
       </button>
@@ -142,35 +163,12 @@ function OnlineControls({
           const json = await res.json();
           if (!res.ok) alert(json?.error ?? 'Auto pick failed');
 
-          // local nudge
           const st = useDraftStore.getState();
           useDraftStore.setState({ currentPickOverall: st.currentPickOverall + 1 });
         }}
         className="rounded-lg bg-zinc-700 px-3 py-2 text-sm hover:bg-zinc-600"
       >
         Auto (bot)
-      </button>
-
-      <button
-        onClick={async () => {
-          const res = await fetch('/api/draft/undo', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId }),
-          });
-          const json = await res.json();
-          if (!res.ok) alert(json?.error ?? 'Undo failed');
-
-          // local nudge
-          const st = useDraftStore.getState();
-          useDraftStore.setState({
-            drafted: st.drafted.slice(0, -1),
-            currentPickOverall: Math.max(1, st.currentPickOverall - 1),
-          });
-        }}
-        className="rounded-lg bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
-      >
-        Undo (commish)
       </button>
 
       <button
@@ -223,9 +221,17 @@ export default function DraftRoomPage() {
             isOnline: true,
           });
 
-          if (Object.keys(useDraftStore.getState().players).length === 0) {
-            const rec = Object.fromEntries((PLAYERS_JSON as any[]).map((p: any) => [p.id, p]));
-            useDraftStore.setState({ players: rec, adp: ADP_JSON as any });
+          // Seed players if store is tiny (sample) — auto-load snapshot if available
+          if (Object.keys(useDraftStore.getState().players).length < 100) {
+            // Try loading from snapshot (no error if none yet)
+            const n = await loadPlayersIntoStore().catch(()=>0);
+            if (n && n >= 100) {
+              // loaded real pool
+            } else {
+              // fallback to sample
+              const rec = Object.fromEntries((PLAYERS_JSON as any[]).map((p: any) => [p.id, p]));
+              useDraftStore.setState({ players: rec, adp: ADP_JSON as any });
+            }
           }
 
           unsubscribe = subscribeToSession(session.id, {
@@ -271,7 +277,7 @@ export default function DraftRoomPage() {
 
   // Commish force pick from the board
   const handleForcePick = async (teamId: string, playerId: string) => {
-    const token = getOrCreateClaimToken(sessionId as string); // any token works for commish in dev
+    const token = getOrCreateClaimToken(sessionId as string);
     const res = await fetch('/api/draft/pick', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -280,7 +286,6 @@ export default function DraftRoomPage() {
     const json = await res.json();
     if (!res.ok) return alert(json?.error ?? 'Force pick failed');
 
-    // optimistic
     const st = useDraftStore.getState();
     const n = (st.config?.order?.length ?? 10);
     const overall = st.currentPickOverall;
@@ -290,6 +295,14 @@ export default function DraftRoomPage() {
       currentPickOverall: overall + 1,
     });
   };
+
+  if (typeof window !== 'undefined') {
+  (window as any).debugPlayers = () => {
+    const st = useDraftStore.getState();
+    console.log("Total players:", Object.keys(st.players).length);
+    console.log("Sample:", Object.values(st.players).slice(0, 20));
+  };
+}
 
   return (
     <main className="space-y-4">
@@ -323,16 +336,12 @@ export default function DraftRoomPage() {
         <section className="md:col-span-8">
           <BestAvailablePanel list={bestList} selectedId={selectedId} onSelect={select} />
         </section>
+
         <aside className="md:col-span-4 space-y-4">
           <TeamClaimList sessionId={sessionId as string} />
           <QueueTargetsPanel />
           <RosterPanel />
-          <aside className="md:col-span-4 space-y-4">
-  <TeamClaimList sessionId={sessionId as string} />
-  <QueueTargetsPanel />
-  <RosterPanel />
-  <SurvivabilityPanel sessionId={sessionId as string} selectedId={selectedId} />
-</aside>
+          <SurvivabilityPanel sessionId={sessionId as string} selectedId={selectedId} />
         </aside>
       </div>
 

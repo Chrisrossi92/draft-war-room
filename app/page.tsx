@@ -2,14 +2,18 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+
 import BrandBadge from '@/components/core/BrandBadge';
 import DataSyncChip from '@/components/core/DataSyncChip';
 import { createQuickSession } from '@/lib/createQuickSession';
+import { refreshPlayersFromServer, loadPlayersIntoStore } from '@/lib/data/loadPlayers';
 
 export default function Page() {
   const router = useRouter();
+
   const [joining, setJoining] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [code, setCode] = useState('');
 
   const handleQuickDraft = async () => {
@@ -49,6 +53,19 @@ export default function Page() {
     }
   };
 
+  const handleRefreshData = async () => {
+    try {
+      setRefreshing(true);
+      await refreshPlayersFromServer();            // fetch + snapshot in Supabase
+      const n = await loadPlayersIntoStore();      // load latest snapshot into store
+      alert(`Loaded ${n} players.`);
+    } catch (e: any) {
+      alert(e?.message ?? 'Refresh failed');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <main className="space-y-8">
       <header className="flex items-center justify-between">
@@ -59,7 +76,7 @@ export default function Page() {
       <section className="rounded-2xl border border-zinc-800 p-6">
         <h1 className="text-2xl font-semibold">Draft War Room</h1>
         <p className="mt-2 text-zinc-400">
-          Quick offline mock drafts with a clean board and smart queue. Or spin up an online lobby and draft live with friends.
+          Quick offline mocks or an online lobby with realtime picks. Refresh the player pool whenever you like.
         </p>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -93,8 +110,18 @@ export default function Page() {
               {joining ? 'Joining…' : 'Join'}
             </button>
           </div>
+
+          <button
+            onClick={handleRefreshData}
+            disabled={refreshing}
+            className="rounded-xl bg-zinc-800 px-4 py-2 hover:bg-zinc-700 disabled:opacity-50"
+            title="Fetch latest players/ADP from Sleeper and load into the app"
+          >
+            {refreshing ? 'Refreshing…' : 'Refresh Data'}
+          </button>
         </div>
       </section>
     </main>
   );
 }
+
